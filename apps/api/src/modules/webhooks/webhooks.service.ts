@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { generateWebhookSignature } from '../../utils/webhook-signer';
 import { encryptToString, decryptFromString } from '../../utils/crypto-vault';
+import { PayloadMaskingEngine } from './payload-masker';
 
 export interface WebhookTestResult {
   success: boolean;
@@ -224,8 +225,22 @@ export class WebhooksService {
       },
     };
 
-    if (webhook.payloadTemplate) {
-      rawPayload = dynamicPayloadTransformer.transform(rawPayload, webhook.payloadTemplate);
+    let activeTemplate = webhook.payloadTemplate;
+    const maskingRules = PayloadMaskingEngine.extractRules(webhook);
+    if (maskingRules && maskingRules.length > 0) {
+      rawPayload = PayloadMaskingEngine.mask(rawPayload, maskingRules);
+      if (typeof activeTemplate === 'string' && activeTemplate.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(activeTemplate);
+          activeTemplate = parsed.template ?? null;
+        } catch {
+          // Plain template string
+        }
+      }
+    }
+
+    if (activeTemplate) {
+      rawPayload = dynamicPayloadTransformer.transform(rawPayload, activeTemplate);
     }
 
     const payload = JSON.stringify(rawPayload);

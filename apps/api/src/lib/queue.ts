@@ -8,6 +8,7 @@ import { cryptoVault } from '../utils/crypto-vault';
 import { applyWebhookPayloadTemplate } from '../utils/payload-template';
 import { adaptiveWebhookRateLimiter, waitForAdaptiveBackoff } from '../utils/rate-limiter';
 import { generateWebhookSignature } from '../utils/webhook-signer';
+import { PayloadMaskingEngine } from '../modules/webhooks/payload-masker';
 import { dispatchWhatsAppAlert, WhatsAppInvalidNumberError } from '../utils/whatsapp';
 import { prisma } from './prisma';
 import { createLogger } from './logger';
@@ -346,7 +347,24 @@ export async function dispatchWebhookAndLog(
       await waitForAdaptiveBackoff(adaptiveDelayMs);
     }
 
-    const templateResult = applyWebhookPayloadTemplate(payload, webhook.payloadTemplate);
+    let activeTemplate = webhook.payloadTemplate;
+    let payloadToDeliver = payload;
+
+    // Apply schema-driven field masking policy engine prior to HMAC signature generation (#990)
+    const maskingRules = PayloadMaskingEngine.extractRules(webhook);
+    if (maskingRules && maskingRules.length > 0) {
+      payloadToDeliver = PayloadMaskingEngine.mask(payloadToDeliver, maskingRules);
+      if (typeof activeTemplate === 'string' && activeTemplate.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(activeTemplate);
+          activeTemplate = parsed.template ?? null;
+        } catch {
+          // Plain template string
+        }
+      }
+    }
+
+    const templateResult = applyWebhookPayloadTemplate(payloadToDeliver, activeTemplate);
     if (!templateResult.ok) {
       queueLog.warn(
         `[WebhookDispatch] Payload template error for webhook ${webhookId}: ${templateResult.error}`,

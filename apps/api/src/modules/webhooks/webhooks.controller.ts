@@ -12,7 +12,20 @@ export class WebhooksController {
     }
 
     const userId = (request as any).user.id;
-    const webhook = await webhooksService.addWebhook(userId, parsed.data.url, parsed.data.payloadTemplate);
+    let payloadTemplate = parsed.data.payloadTemplate;
+    if (parsed.data.maskingRules && parsed.data.maskingRules.length > 0) {
+      if (payloadTemplate) {
+        payloadTemplate = JSON.stringify({
+          template: payloadTemplate,
+          maskingRules: parsed.data.maskingRules,
+        });
+      } else {
+        payloadTemplate = JSON.stringify({
+          maskingRules: parsed.data.maskingRules,
+        });
+      }
+    }
+    const webhook = await webhooksService.addWebhook(userId, parsed.data.url, payloadTemplate);
     return reply.status(201).send({ success: true, webhook });
   }
 
